@@ -247,14 +247,17 @@ mod tests {
         // and the mock environment with height and time to later compare it.
         let mut deps = mock_dependencies();
 
+        // Our init message says height 1000 
         let msg = init_msg_expire_by_height(Some(Expiration::AtHeight(1000)));
         let mut env = mock_env();
+        // And the block we're setting is 1001, so should break
         env.block.height = 1001;
         env.block.time = Timestamp::from_seconds(0);
-        // Generating the message 
+        // Generating the info of the funds
         let info = mock_info("creator", &coins(1000, "earth"));
-
+        // Instantiating contract
         let res = instantiate(deps.as_mut(), env, info, msg);
+        // We just check that it actually broke and sent the correct error (Expired)
         match res.unwrap_err() {
             ContractError::Expired { .. } => {}
             e => panic!("unexpected error: {:?}", e),
@@ -264,23 +267,29 @@ mod tests {
     #[test]
     fn init_and_query() {
         let mut deps = mock_dependencies();
-
+        // We generate the addresses we need for the message
         let arbiter = Addr::unchecked("arbiters");
         let recipient = Addr::unchecked("receives");
         let creator = Addr::unchecked("creates");
+        // We include all the info for the Instantiate msg
         let msg = InstantiateMsg {
             arbiter: arbiter.clone().into(),
             recipient: recipient.into(),
             expiration: None,
         };
         let mut env = mock_env();
+        // We add any block height (it doesn't matter since we don't add an 
+        // expiration date)
         env.block.height = 876;
         env.block.time = Timestamp::from_seconds(0);
+        // We don't add anything else
         let info = mock_info(creator.as_str(), &[]);
+        // Instantiate
         let res = instantiate(deps.as_mut(), env, info, msg).unwrap();
+        // We get the response as something empty
         assert_eq!(0, res.messages.len());
 
-        // now let's query
+        // And we query if the arbiter is actually the one we defined
         let query_response = query_arbiter(deps.as_ref()).unwrap();
         assert_eq!(query_response.arbiter, arbiter);
     }
@@ -291,49 +300,60 @@ mod tests {
 
         // initialize the store
         let init_amount = coins(1000, "earth");
+        // Instantiate msg at height 1000
         let msg = init_msg_expire_by_height(Some(Expiration::AtHeight(1000)));
         let mut env = mock_env();
+        // We set a previous block than the one we're setting
         env.block.height = 876;
         env.block.time = Timestamp::from_seconds(0);
+        // Mock info with the amount of tokens we'll send in the tx
         let info = mock_info("creator", &init_amount);
+        // We get the contract address
         let contract_addr = env.clone().contract.address;
+        // We instantiate
         let init_res = instantiate(deps.as_mut(), env, info, msg).unwrap();
         assert_eq!(0, init_res.messages.len());
 
-        // balance changed in init
+        // We update the balance of the address
         deps.querier.update_balance(&contract_addr, init_amount);
 
-        // beneficiary cannot release it
+        // We check the address 'beneficiary' can't execute the contract
         let msg = ExecuteMsg::Approve { quantity: None };
         let mut env = mock_env();
         env.block.height = 900;
         env.block.time = Timestamp::from_seconds(0);
         let info = mock_info("beneficiary", &[]);
         let execute_res = execute(deps.as_mut(), env, info, msg.clone());
+        // And we verify the respective error 
         match execute_res.unwrap_err() {
             ContractError::Unauthorized { .. } => {}
             e => panic!("unexpected error: {:?}", e),
         }
 
-        // verifier cannot release it when expired
+        // Checking that in block 1100 we can't ask for the tokens if the 
+        // Contract expired
         let mut env = mock_env();
         env.block.height = 1100;
         env.block.time = Timestamp::from_seconds(0);
         let info = mock_info("verifies", &[]);
         let execute_res = execute(deps.as_mut(), env, info, msg.clone());
+        // And we get the respective error
         match execute_res.unwrap_err() {
             ContractError::Expired { .. } => {}
             e => panic!("unexpected error: {:?}", e),
         }
 
-        // complete release by verifier, before expiration
+        // Here we check the 'verifies' address can send the assets before 
+        // the expiration mark
         let mut env = mock_env();
         env.block.height = 999;
         env.block.time = Timestamp::from_seconds(0);
         let info = mock_info("verifies", &[]);
         let execute_res = execute(deps.as_mut(), env, info, msg).unwrap();
+        // We verify after executing there is at least one message
         assert_eq!(1, execute_res.messages.len());
         let msg = execute_res.messages.get(0).expect("no message");
+        // And the submsg is the CosmosMsg that sent the tokens to 'benefits' Addr.
         assert_eq!(
             msg.msg,
             CosmosMsg::Bank(BankMsg::Send {
@@ -349,8 +369,10 @@ mod tests {
         let mut env = mock_env();
         env.block.height = 999;
         env.block.time = Timestamp::from_seconds(0);
+        // We need 'verifies' address to send the msg
         let info = mock_info("verifies", &[]);
         let execute_res = execute(deps.as_mut(), env, info, partial_msg).unwrap();
+        // We verify content and same procedure as before
         assert_eq!(1, execute_res.messages.len());
         let msg = execute_res.messages.get(0).expect("no message");
         assert_eq!(
@@ -368,39 +390,53 @@ mod tests {
 
         // initialize the store
         let init_amount = coins(1000, "earth");
+        // Create the msg
         let msg = init_msg_expire_by_height(Some(Expiration::AtHeight(1000)));
+        // Creating env
         let mut env = mock_env();
         env.block.height = 876;
         env.block.time = Timestamp::from_seconds(0);
+        // Creating mock info.
         let info = mock_info("creator", &init_amount);
         let contract_addr = env.clone().contract.address;
+        // Instantiate the msg with the previous vars defined
         let init_res = instantiate(deps.as_mut(), env, info, msg).unwrap();
         assert_eq!(0, init_res.messages.len());
 
-        // balance changed in init
+        // balance from contract is updated given the amount.
         deps.querier.update_balance(&contract_addr, init_amount);
 
-        // cannot release when unexpired (height < Expiration::AtHeight(1000))
+        // We'll try to refund and see an error because it's not expired yet
         let msg = ExecuteMsg::Refund {};
+        // We define again the whole env
         let mut env = mock_env();
         env.block.height = 800;
         env.block.time = Timestamp::from_seconds(0);
+        // And the MessageInfo would have any user to refund
         let info = mock_info("anybody", &[]);
         let execute_res = execute(deps.as_mut(), env, info, msg);
+        // But will get a mistake because the expiration is at block 1000, not 800
         match execute_res.unwrap_err() {
             ContractError::NotExpired { .. } => {}
             e => panic!("unexpected error: {:?}", e),
         }
 
-        // Contract expires when height == Expiration::AtHeight(1000)
+        // Checking expiration when block == expiration_block
         let msg = ExecuteMsg::Refund {};
+        // New env
         let mut env = mock_env();
         env.block.height = 1000;
         env.block.time = Timestamp::from_seconds(0);
+        // anybody as sender
         let info = mock_info("anybody", &[]);
+        // Executing
         let execute_res = execute(deps.as_mut(), env, info, msg).unwrap();
+        // Getting the output should contain 1 message
         assert_eq!(1, execute_res.messages.len());
+        // We read the content
         let msg = execute_res.messages.get(0).expect("no message");
+        // And verify there is a submsg that is the sending of the assets
+        // to the creator
         assert_eq!(
             msg.msg,
             CosmosMsg::Bank(BankMsg::Send {
@@ -409,11 +445,13 @@ mod tests {
             })
         );
 
-        // anyone can release after expiration
+        // And everyone can refund given the expiration
         let msg = ExecuteMsg::Refund {};
+        // Remember expiration_block == 1000 and here we're making it 1001
         let mut env = mock_env();
         env.block.height = 1001;
         env.block.time = Timestamp::from_seconds(0);
+        // Rest of procedure is as before
         let info = mock_info("anybody", &[]);
         let execute_res = execute(deps.as_mut(), env, info, msg).unwrap();
         assert_eq!(1, execute_res.messages.len());
@@ -428,6 +466,7 @@ mod tests {
     }
 
     #[test]
+    // Name of test speaks by itself
     fn handle_refund_no_expiration() {
         let mut deps = mock_dependencies();
 
@@ -435,6 +474,7 @@ mod tests {
         let init_amount = coins(1000, "earth");
         let msg = init_msg_expire_by_height(None);
         let mut env = mock_env();
+        // We set the block state as 876 (< 1000)
         env.block.height = 876;
         env.block.time = Timestamp::from_seconds(0);
         let info = mock_info("creator", &init_amount);
@@ -442,16 +482,19 @@ mod tests {
         let init_res = instantiate(deps.as_mut(), env, info, msg).unwrap();
         assert_eq!(0, init_res.messages.len());
 
-        // balance changed in init
+        // We update the state of the contract given the assets sent
         deps.querier.update_balance(&contract_addr, init_amount);
 
-        // cannot release when unexpired (no expiration)
+        // Can't make refund without time arrived
         let msg = ExecuteMsg::Refund {};
         let mut env = mock_env();
+        // setting block height == 800
         env.block.height = 800;
         env.block.time = Timestamp::from_seconds(0);
         let info = mock_info("anybody", &[]);
+        // Executing the refund msg
         let execute_res = execute(deps.as_mut(), env, info, msg);
+        // Error obtained (as was suposed to be)
         match execute_res.unwrap_err() {
             ContractError::NotExpired { .. } => {}
             e => panic!("unexpected error: {:?}", e),
